@@ -11,19 +11,21 @@ Usage:
     awspfx.py --version
 
 Examples:
-    awspfx.py default # Change profile to 'default'
-    awspfx.py token # Token from current profile
-    awspfx.py token -p default # Token from profile 'default'
-    awspfx.py (-c | -ls | -s)
+    awspfx.py default               # Change profile to 'default'
+    awspfx.py token                 # Token from current profile
+    awspfx.py token -p default      # Token from profile 'default'
+    awspfx.py (-c | -l | -s)
+
+SubCommands:
+    token         Generate credentials
+    -p --profile  Select profile
 
 Options:
+    -c --current  Change the profile
+    -l --list     List profiles
+    -s --swap     Swap previous the profile
     -h --help     Show this screen.
     --version     Show version.
-    -p --profile  Select profile
-    -t --token    Generate credentials
-    -c --current  Change the profile
-    -l --list    List profiles
-    -s --swap     Swap previous the profile
 """
 
 import json
@@ -40,6 +42,7 @@ import boto3
 from colorlog import ColoredFormatter
 from docopt import docopt
 from iterfzf import iterfzf
+import botocore
 
 
 def setup_logging():
@@ -221,11 +224,19 @@ def get_token(ctx):
 
     client = boto3.client('sso', region_name='us-east-1')
 
-    res = client.get_role_credentials(
-        accountId=act_id,
-        roleName=act_role,
-        accessToken=accessToken
-    )
+    res = {}
+    try:
+        res = client.get_role_credentials(
+            accountId=act_id,
+            roleName=act_role,
+            accessToken=accessToken
+        )
+    except Exception as e:
+        log.error(e)
+        log.warning("The SSO session associated with this profile has expired "
+                    "or is otherwise invalid. To refresh this SSO session run "
+                    "aws sso login with the corresponding profile.")
+        sys.exit(2)
 
     aws_access_key_id = res['roleCredentials']['accessKeyId']
     aws_secret_access_key = res['roleCredentials']['secretAccessKey']
