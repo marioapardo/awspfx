@@ -6,13 +6,13 @@ Usage:
     awspfx.py <profile>
     awspfx.py [(-c | --current) | (-l | --list) | (-s | --swap)]
     awspfx.py token [(-p | --profile) <profile>]
-    awspfx.py sso [<login> | <token>]
+    awspfx.py sso [(login | token)] [(-p | --profile) <profile>]
     awspfx.py -h | --help
     awspfx.py --version
 
 Examples:
     awspfx.py default               # Change profile to 'default'
-    awspfx.py token                 # Token from current profile
+    awspfx.py token                 # Token from current profile, default from SSO
     awspfx.py token -p default      # Token from profile 'default'
     awspfx.py (-c | -l | -s)
 
@@ -26,6 +26,10 @@ Options:
     -s --swap     Swap previous the profile
     -h --help     Show this screen.
     --version     Show version.
+
+WIP:
+    sso           Option to login
+    sts           Option to assume-role
 """
 
 import json
@@ -42,22 +46,21 @@ import boto3
 from colorlog import ColoredFormatter
 from docopt import docopt
 from iterfzf import iterfzf
-import botocore
 
 
 def setup_logging():
-    LOG_LEVEL = logging.INFO
-    LOGFORMAT = "\n%(log_color)s%(levelname)s%(reset)s => %(log_color)s%(message)s%(reset)s"
-    logging.root.setLevel(LOG_LEVEL)
-    formatter = ColoredFormatter(LOGFORMAT)
-    stream = logging.StreamHandler()
-    stream.setLevel(LOG_LEVEL)
-    stream.setFormatter(formatter)
-    log = logging.getLogger('pythonConfig')
-    log.setLevel(LOG_LEVEL)
-    log.addHandler(stream)
+    log_level = logging.INFO
+    log_format = "\n%(log_color)s%(levelname)s%(reset)s => %(log_color)s%(message)s%(reset)s"
+    logging.root.setLevel(log_level)
+    formatter = ColoredFormatter(log_format)
+    stream_ = logging.StreamHandler()
+    stream_.setLevel(log_level)
+    stream_.setFormatter(formatter)
+    log_ = logging.getLogger("pythonConfig")
+    log_.setLevel(log_level)
+    log_.addHandler(stream_)
 
-    return log
+    return log_
 
 
 def exit_err(msg):
@@ -77,14 +80,16 @@ def has_which(command, err=True):
 
 
 def has_file(file, create=False):
-    if os.path.isfile(file):
-        return file
-    else:
+    f = os.path.isfile(file) or False
+
+    if not f:
         if create:
-            f = open(file, "w+")
-            f.close()
+            f_ = open(file, "w+")
+            f_.close()
         else:
             exit_err(f"File not exist: {file}")
+
+    return file
 
 
 def run_cmd(command):
@@ -108,7 +113,7 @@ def fzf(data: list, current: str = None):
 def sed_inplace(filename, pattern, repl):
     p = re.compile(pattern, re.MULTILINE)
 
-    with tempfile.NamedTemporaryFile(mode='w', delete=False) as tmp_file:
+    with tempfile.NamedTemporaryFile(mode="w", delete=False) as tmp_file:
         with open(filename, "r") as file:
             text = file.read()
             if "AWS_PROFILE" in text:
@@ -123,49 +128,66 @@ def sed_inplace(filename, pattern, repl):
     shutil.move(tmp_file.name, filename)
 
 
+def setup_aws(ctx: str = None):
+    try:
+        if ctx is None:
+            # if aws_profile_env is None:
+            #     del os.environ['AWS_PROFILE']
+            aws_session = boto3.session.Session()
+        else:
+            aws_session = boto3.session.Session(profile_name=ctx)
+
+        return aws_session
+    except Exception as e:
+        exit_err(e)
+
+
 def current_profile(err=True):
-    ctx = os.getenv("AWS_PROFILE")
+    ctx = aws.profile_name
     if err:
         return ctx or exit_err("Getting current profile")
     return ctx
 
 
 def get_profiles(err=True):
-    cmd = f"unset AWS_PROFILE; {AWS} configure list-profiles | sort -n"
-    resp = run_cmd(cmd)
-    ctx = list(resp.split("\n")) if resp else None
-    if err:
-        return ctx or exit_err("Getting profile list")
-    return ctx
+    try:
+        ctx_ls = aws.available_profiles
+        ctx = sorted(ctx_ls, reverse=True)
+        if err:
+            return ctx or exit_err("Getting profile list")
+        return ctx
+    except Exception as e:
+        log.error(e)
 
 
 def list_profiles(lst=False):
     ctx_current = current_profile(err=False)
     ctx_list = get_profiles()
     if lst:
-        print(*ctx_list, sep="\n")
+        ctx = reversed(ctx_list)
+        print(*ctx, sep="\n")
     else:
         p = fzf(data=ctx_list, current=ctx_current)
         return p
 
 
 def read_profile():
-    with open(AWSPFX_CACHE, 'r') as file:
+    with open(awspfx_cache, 'r') as file:
         r = file.read()
         return r
 
 
 def save_profile(ctx_current):
     ctx = ctx_current if ctx_current else ""
-    with open(AWSPFX_CACHE, "w") as file:
+    with open(awspfx_cache, "w") as file:
         file.write(ctx)
 
 
 def switch_profile(ctx, ctx_current):
-    ctx_old = f'AWS_PROFILE="{ctx_current}"'
-    ctx_repl = f'AWS_PROFILE="{ctx}"'
+    ctx_old = f"AWS_PROFILE={ctx_current}"
+    ctx_repl = f"AWS_PROFILE={ctx}"
 
-    sed_inplace(ENVRC_FILE, ctx_old, ctx_repl)
+    sed_inplace(envrc_file, ctx_old, ctx_repl)
     save_profile(ctx_current)
 
     run_cmd("direnv allow && direnv reload")
@@ -179,7 +201,7 @@ def set_profile(ctx, ctx_current=None, sms=None):
         log.warning(f"The profile is not changed: {ctx_current}")
     else:
         switch_profile(ctx, ctx_current)
-        sms_text = sms if sms else f"Switched to profile: {ctx}"
+        sms_text = sms or f"Switched to profile: {ctx}"
         log.info(sms_text)
 
 
@@ -197,21 +219,16 @@ def exist_profile(ctx):
         exit_err(f"Profile does not exist: {ctx}")
 
 
-def get_token(ctx):
-    aws_cred = cfgParser()
-    aws_cred.read(CREDS_FILE)
+def sso(account_id, role_name):
+    client = aws.client("sso", region_name="us-east-1")
 
-    act_id = os.getenv('AWS_ACCOUNT_ID') or aws_cred.get(ctx, 'account_id')
-    act_role = os.getenv('AWS_ROLE_NAME') or aws_cred.get(ctx, 'role_name')
-    act_region = os.getenv('AWS_REGION') or aws_cred.get(ctx, 'region')
-
-    aws_sso_cache = os.path.expanduser('~/.aws/sso/cache')
+    aws_sso_cache = os.path.expanduser("~/.aws/sso/cache")
 
     json_files = [
         pos_json for pos_json in os.listdir(
             aws_sso_cache
         ) if pos_json.endswith(
-            '.json'
+            ".json"
         )
     ]
 
@@ -219,18 +236,17 @@ def get_token(ctx):
         path = f"{aws_sso_cache}/{json_file}"
         with open(path) as file:
             data = json.load(file)
-            if 'accessToken' in data:
-                accessToken = data['accessToken']
+            if "accessToken" in data:
+                access_token = data['accessToken']
 
-    client = boto3.client('sso', region_name='us-east-1')
-
-    res = {}
     try:
-        res = client.get_role_credentials(
-            accountId=act_id,
-            roleName=act_role,
-            accessToken=accessToken
+        cred = client.get_role_credentials(
+            accountId=account_id,
+            roleName=role_name,
+            accessToken=access_token
         )
+
+        return cred
     except Exception as e:
         log.error(e)
         log.warning("The SSO session associated with this profile has expired "
@@ -238,32 +254,53 @@ def get_token(ctx):
                     "aws sso login with the corresponding profile.")
         sys.exit(2)
 
-    aws_access_key_id = res['roleCredentials']['accessKeyId']
-    aws_secret_access_key = res['roleCredentials']['secretAccessKey']
-    aws_session_token = res['roleCredentials']['sessionToken']
 
-    session = boto3.Session(
-        aws_access_key_id=aws_access_key_id,
-        aws_secret_access_key=aws_secret_access_key,
-        aws_session_token=aws_session_token,
-        region_name=act_region
-    )
+def sts(account_id, role, region):
+    role_info = {
+        "RoleArn": f"arn:aws:iam::{account_id}:role/{role}",
+        "RoleSessionName": "session01"
+    }
+
+    client = aws.client("sts", region_name=region)
+    cred = client.assume_role(**role_info)
+
+    return cred
+
+
+def get_token(ctx, sso_=True, sts_=False):
+    aws_cred = cfgParser()
+    aws_cred.read(creds_file)
+
+    act_id = os.getenv("AWS_ACCOUNT_ID") or aws_cred.get(ctx, "account_id")
+    act_role = os.getenv("AWS_ROLE_NAME") or aws_cred.get(ctx, "role_name")
+    act_region = os.getenv("AWS_REGION") or aws_cred.get(ctx, "region")
+
+    if sso_:
+        cred = sso(account_id=act_id, role_name=act_role)
+    elif sts_:
+        cred = sts(account_id=act_id, role=act_role, region=act_region)
+    else:
+        cred = {}
+        exit_err("Not select option from token")
+
+    aws_access_key_id = cred['roleCredentials']['accessKeyId']
+    aws_secret_access_key = cred['roleCredentials']['secretAccessKey']
+    aws_session_token = cred['roleCredentials']['sessionToken']
 
     # print('Save Credentials in ~/.aws/credentials ...')
+    aws_cred.set(ctx, "aws_access_key_id", aws_access_key_id)
+    aws_cred.set(ctx, "aws_secret_access_key", aws_secret_access_key)
+    aws_cred.set(ctx, "aws_session_token", aws_session_token)
 
-    aws_cred.set(ctx, 'aws_access_key_id', aws_access_key_id)
-    aws_cred.set(ctx, 'aws_secret_access_key', aws_secret_access_key)
-    aws_cred.set(ctx, 'aws_session_token', aws_session_token)
-
-    with open(CREDS_FILE, 'w') as f:
+    with open(creds_file, "w") as f:
         aws_cred.write(f)
 
 
 def main(argv):
-    ctx = argv["<profile>"]
+    ctx = argv['<profile>']
 
-    if ctx == "token" or argv["token"]:
-        if argv["--profile"]:
+    if ctx == "token" or argv['token']:
+        if argv['--profile']:
             if exist_profile(ctx):
                 get_token(ctx)
                 log.info(f"Generate token to: {ctx}")
@@ -274,19 +311,19 @@ def main(argv):
 
         sys.exit()
 
-    if ctx == "sso" or argv["sso"]:
+    if ctx == "sso" or argv['sso']:
         print("sso")
         sys.exit()
 
-    if argv["--current"]:
+    if argv['--current']:
         log.info(f"The current profile is: '{current_profile()}'")
         sys.exit()
 
-    if argv["--list"]:
+    if argv['--list']:
         list_profiles(lst=True)
         sys.exit()
 
-    if argv["--swap"]:
+    if argv['--swap']:
         swap_profile()
         sys.exit()
 
@@ -303,12 +340,13 @@ def main(argv):
 
 if __name__ == "__main__":
     log = setup_logging()
-    HOME = os.getenv('HOME') or exit_err("Home directory does not exist?")
-    AWS = has_which("aws")
-    AWSPFX_CACHE = has_file(f"{HOME}/.aws/awspfx", create=True)
-    DIRENV = has_which("direnv")
-    ENVRC_FILE = has_file(f"{HOME}/.envrc")
-    CREDS_FILE = has_file(f"{os.getenv('HOME')}/.aws/credentials")
+    home_path = os.getenv('HOME') or exit_err("Home directory does not exist?")
+    # aws_profile_env = os.getenv("AWS_PROFILE")
+    aws = setup_aws()
+    awspfx_cache = has_file(f"{home_path}/.aws/awspfx", create=True)
+    direnv = has_which("direnv")
+    envrc_file = has_file(f"{home_path}/.envrc")
+    creds_file = has_file(f"{home_path}/.aws/credentials")
 
-    arguments = docopt(__doc__, version='awspfx 0.1.0')
+    arguments = docopt(__doc__, version='awspfx 0.1.5')
     main(arguments)
