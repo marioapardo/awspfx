@@ -1,0 +1,5 @@
+[profile default]
+sso_start_url = https://aws.awsapps.com/start
+sso_region = us-east-1
+sso_account_id = 001122334455
+sso_role_name = role-shared-access-dev

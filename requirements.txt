@@ -1,0 +1,11 @@
+boto3==1.14.51
+botocore==1.17.51
+colorlog==4.2.1
+docopt==0.6.2
+docutils==0.15.2
+iterfzf==0.5.0.20.0
+jmespath==0.10.0
+python-dateutil==2.8.1
+s3transfer==0.3.3
+six==1.15.0
+urllib3==1.25.10
