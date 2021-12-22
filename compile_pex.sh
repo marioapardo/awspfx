@@ -15,4 +15,4 @@ echo "---"
 #
 
 # Compile Image
-poetry run pex . --sources-directory=awspfx --entry-point=awspfx --requirement=requirements.txt --output-file=awspfx.pex
+poetry run pex . --sources-directory=src/awspfx --entry-point=awspfx --requirement=requirements.txt --output-file=awspfx.pex

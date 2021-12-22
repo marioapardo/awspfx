@@ -120,7 +120,7 @@ def sed_inplace(filename, pattern, repl):
                 new = p.sub(repl, text)
                 tmp_file.write(new)
             else:
-                print("No existe profile")
+                print("No exist profile")
                 tmp_file.write(text)
                 tmp_file.write(f"export {repl}")
 
@@ -184,8 +184,8 @@ def save_profile(ctx_current):
 
 
 def switch_profile(ctx, ctx_current):
-    ctx_old = f"AWS_PROFILE={ctx_current}"
-    ctx_repl = f"AWS_PROFILE={ctx}"
+    ctx_old = f'AWS_PROFILE="{ctx_current}"'
+    ctx_repl = f'AWS_PROFILE="{ctx}"'
 
     sed_inplace(envrc_file, ctx_old, ctx_repl)
     save_profile(ctx_current)
@@ -348,5 +348,5 @@ if __name__ == "__main__":
     envrc_file = has_file(f"{home_path}/.envrc")
     creds_file = has_file(f"{home_path}/.aws/credentials")
 
-    arguments = docopt(__doc__, version='awspfx 0.1.5')
+    arguments = docopt(__doc__, version=f'awspfx 0.1.6 - python {sys.version}')
     main(arguments)
