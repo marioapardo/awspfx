@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 
-poetry run python awspfx/awspfx.py $@
+poetry run python src/awspfx.py $@
